@@ -15,7 +15,7 @@ MERCHANT_NAME = "Discount Codes Store"
 ADMIN_USER_IDS = [int(os.getenv("ADMIN_ID", "1455619072"))]
 UPI_ID = os.getenv("UPI_ID", "amit2312003@slc")
 
-PRICING = {1: 50, 5: 200, 10: 350}
+PRICING = {1: 30, 5: 140, 10: 270}
 
 TERMS_TEXT = """📜 Terms and Conditions
 
@@ -163,7 +163,7 @@ async def quantity_selected(callback: CallbackQuery, state: FSMContext):
         await callback.answer()
         return
     quantity = int(qty_data)
-    amount = PRICING[quantity]
+    amount = PRICING.get(quantity, quantity*50)
     if db.get_stock_count() < quantity:
         await callback.answer(
             f"❌ Not enough stock! Only {db.get_stock_count()} available",
@@ -175,12 +175,14 @@ async def quantity_selected(callback: CallbackQuery, state: FSMContext):
         quantity, amount
     )
     await state.update_data(order_id=order_id, quantity=quantity, amount=amount)
-    await callback.message.edit_text(
+    msg = (
         f"📄 PAYMENT INVOICE\n"
         f"Order ID: {order_id}\nCustomer: {callback.from_user.first_name}\n"
         f"Quantity: {quantity} codes\nAmount: Rs.{amount}\n"
         "Choose UPI App or scan QR to pay.\nClick 'I've Paid' when done, or upload UTR/Screenshot. Or click Cancel Order."
     )
+    await callback.message.edit_text(msg)
+    # Send QR and keyboard
     if os.path.exists(UPI_QR_IMAGE_PATH):
         qr_photo = FSInputFile(UPI_QR_IMAGE_PATH)
         await callback.message.answer_photo(
@@ -201,9 +203,8 @@ async def receive_proof_prompt(callback: CallbackQuery, state: FSMContext):
     order_id = callback.data.split("_", 1)[1]
     await state.update_data(order_id=order_id)
     await callback.message.answer(
-        f"📤 Please send either your UPI payment UTR/Reference ID as text *or* payment screenshot as a photo below.\n"
-        "Once received, your order will await admin verification.\n"
-        "Send /cancel to stop."
+        f"📤 Please send either your UPI payment UTR/Reference ID as text *or* payment screenshot as a photo below."
+        "\nOnce received, your order will await admin verification.\nSend /cancel to stop."
     )
     await state.set_state(OrderStates.waiting_for_proof)
     await callback.answer("Send your UTR or screenshot below.")
@@ -246,10 +247,11 @@ async def custom_quantity_entered(message: Message, state: FSMContext):
             quantity, amount
         )
         await state.update_data(order_id=order_id, quantity=quantity, amount=amount)
-        await message.answer(
+        msg = (
             f"📄 PAYMENT INVOICE\nOrder: {order_id}\nQty: {quantity}\nAmt: Rs.{amount}\n"
             "Pay via any UPI App below, then click 'I've Paid', or upload UTR/Screenshot."
         )
+        await message.answer(msg)
         if os.path.exists(UPI_QR_IMAGE_PATH):
             qr_photo = FSInputFile(UPI_QR_IMAGE_PATH)
             await message.answer_photo(
