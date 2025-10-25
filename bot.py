@@ -15,7 +15,7 @@ MERCHANT_NAME = "Discount Codes Store"
 ADMIN_USER_IDS = [int(os.getenv("ADMIN_ID", "1455619072"))]
 UPI_ID = os.getenv("UPI_ID", "")
 
-PRICING = {1: 50, 5: 200, 10: 350}
+PRICING = {1: 30, 5: 120, 10: 235}
 
 TERMS_TEXT = """📜 Terms and Conditions
 
@@ -464,3 +464,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
