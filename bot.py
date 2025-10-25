@@ -15,7 +15,7 @@ MERCHANT_NAME = "Discount Codes Store"
 ADMIN_USER_IDS = [int(os.getenv("ADMIN_ID", "1455619072"))]
 UPI_ID = os.getenv("UPI_ID", "amit2312003@slc")
 
-PRICING = {1: 30, 5: 140, 10: 270}
+PRICING = {1: 50, 5: 200, 10: 350}
 
 TERMS_TEXT = """📜 Terms and Conditions
 
@@ -82,18 +82,18 @@ def get_terms_keyboard():
 
 def get_quantity_keyboard():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="1 Code - Rs.30", callback_data="qty_1"),
-         InlineKeyboardButton(text="5 Codes - Rs.140", callback_data="qty_5")],
-        [InlineKeyboardButton(text="10 Codes - Rs.270", callback_data="qty_10"),
+        [InlineKeyboardButton(text="1 Code - Rs.50", callback_data="qty_1"),
+         InlineKeyboardButton(text="5 Codes - Rs.200", callback_data="qty_5")],
+        [InlineKeyboardButton(text="10 Codes - Rs.350", callback_data="qty_10"),
          InlineKeyboardButton(text="📝 Custom", callback_data="qty_custom")],
         [InlineKeyboardButton(text="📦 Check Stock", callback_data="check_stock")],
         [InlineKeyboardButton(text="🔙 Cancel", callback_data="cancel")]
     ])
 
 def get_payment_keyboard(order_id, amount, upi_id):
-    upi_link = f"upi://pay?pa={upi_id}&pn={MERCHANT_NAME}&am={amount}&cu=INR&tn=Order-{order_id}"
+    # NO UPI URL! Just info/copy button
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💳 Pay with UPI App", url=upi_link)],
+        [InlineKeyboardButton(text="Copy UPI ID", callback_data="copy_upi")],
         [InlineKeyboardButton(text="✅ I've Paid", callback_data=f"paid_{order_id}")],
         [InlineKeyboardButton(text="📤 Send UTR/Screenshot", callback_data=f"sendproof_{order_id}")],
         [InlineKeyboardButton(text="❌ Cancel Order", callback_data="cancel_order")]
@@ -157,13 +157,13 @@ async def quantity_selected(callback: CallbackQuery, state: FSMContext):
     qty_data = callback.data.split("_")[1]
     if qty_data == "custom":
         await callback.message.edit_text(
-            "📝 Custom Quantity\nEnter codes you want (Rs.30 each).\nSend /cancel to go back."
+            "📝 Custom Quantity\nEnter codes you want (Rs.50 each).\nSend /cancel to go back."
         )
         await state.set_state(OrderStates.waiting_for_custom_quantity)
         await callback.answer()
         return
     quantity = int(qty_data)
-    amount = PRICING.get(quantity, quantity*50)
+    amount = PRICING.get(quantity, quantity * 50)
     if db.get_stock_count() < quantity:
         await callback.answer(
             f"❌ Not enough stock! Only {db.get_stock_count()} available",
@@ -179,9 +179,10 @@ async def quantity_selected(callback: CallbackQuery, state: FSMContext):
         f"📄 PAYMENT INVOICE\n"
         f"Order ID: {order_id}\nCustomer: {callback.from_user.first_name}\n"
         f"Quantity: {quantity} codes\nAmount: Rs.{amount}\n"
-        "Choose UPI App or scan QR to pay.\nClick 'I've Paid' when done, or upload UTR/Screenshot. Or click Cancel Order."
+        f"Pay to UPI ID: `{UPI_ID}` or scan the QR below using any UPI app.\n"
+        "Click 'I've Paid' when done, or upload UTR/Screenshot. Or click Cancel Order."
     )
-    await callback.message.edit_text(msg)
+    await callback.message.edit_text(msg, parse_mode="Markdown")
     # Send QR and keyboard
     if os.path.exists(UPI_QR_IMAGE_PATH):
         qr_photo = FSInputFile(UPI_QR_IMAGE_PATH)
@@ -197,6 +198,10 @@ async def quantity_selected(callback: CallbackQuery, state: FSMContext):
         )
     await state.set_state(OrderStates.awaiting_payment)
     await callback.answer("Invoice generated!")
+
+@router.callback_query(F.data == "copy_upi")
+async def copy_upi_id(callback: CallbackQuery):
+    await callback.answer("UPI ID copied!", show_alert=True)
 
 @router.callback_query(F.data.startswith("sendproof_"))
 async def receive_proof_prompt(callback: CallbackQuery, state: FSMContext):
@@ -249,9 +254,10 @@ async def custom_quantity_entered(message: Message, state: FSMContext):
         await state.update_data(order_id=order_id, quantity=quantity, amount=amount)
         msg = (
             f"📄 PAYMENT INVOICE\nOrder: {order_id}\nQty: {quantity}\nAmt: Rs.{amount}\n"
-            "Pay via any UPI App below, then click 'I've Paid', or upload UTR/Screenshot."
+            f"Pay to UPI ID: `{UPI_ID}` or scan the QR below using any UPI app.\n"
+            "Click 'I've Paid' when done, or upload UTR/Screenshot. Or click Cancel Order."
         )
-        await message.answer(msg)
+        await message.answer(msg, parse_mode="Markdown")
         if os.path.exists(UPI_QR_IMAGE_PATH):
             qr_photo = FSInputFile(UPI_QR_IMAGE_PATH)
             await message.answer_photo(
@@ -456,4 +462,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-
