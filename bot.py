@@ -82,9 +82,9 @@ def get_terms_keyboard():
 
 def get_quantity_keyboard():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="1 Code - Rs.50", callback_data="qty_1"),
-         InlineKeyboardButton(text="5 Codes - Rs.200", callback_data="qty_5")],
-        [InlineKeyboardButton(text="10 Codes - Rs.350", callback_data="qty_10"),
+        [InlineKeyboardButton(text="1 Code - Rs.30", callback_data="qty_1"),
+         InlineKeyboardButton(text="5 Codes - Rs.130", callback_data="qty_5")],
+        [InlineKeyboardButton(text="10 Codes - Rs.240", callback_data="qty_10"),
          InlineKeyboardButton(text="📝 Custom", callback_data="qty_custom")],
         [InlineKeyboardButton(text="📦 Check Stock", callback_data="check_stock")],
         [InlineKeyboardButton(text="🔙 Cancel", callback_data="cancel")]
@@ -155,7 +155,7 @@ async def quantity_selected(callback: CallbackQuery, state: FSMContext):
     qty_data = callback.data.split("_")[1]
     if qty_data == "custom":
         await callback.message.edit_text(
-            "📝 Custom Quantity\nEnter codes you want (Rs.50 each).\nSend /cancel to go back."
+            "📝 Custom Quantity\nEnter codes you want (Rs.30 each).\nSend /cancel to go back."
         )
         await state.set_state(OrderStates.waiting_for_custom_quantity)
         await callback.answer()
@@ -464,4 +464,5 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
 
