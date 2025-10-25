@@ -173,14 +173,15 @@ async def quantity_selected(callback: CallbackQuery, state: FSMContext):
         quantity, amount
     )
     await state.update_data(order_id=order_id, quantity=quantity, amount=amount)
+    # NO markdown/no parse_mode argument!
     msg = (
-        f"📄 PAYMENT INVOICE\n"
+        "📄 PAYMENT INVOICE\n"
         f"Order ID: {order_id}\nCustomer: {callback.from_user.full_name} (@{callback.from_user.username or 'none'})\n"
         f"Quantity: {quantity} codes\nAmount: Rs.{amount}\n"
-        f"Pay to: `{UPI_ID}` (copy and pay by any UPI app) or scan QR below.\n"
+        f"Pay to: {UPI_ID} (copy and pay via any UPI app) or scan QR below.\n"
         "Click 'I've Paid' when done or upload UTR/Screenshot."
     )
-    await callback.message.edit_text(msg, parse_mode="Markdown")
+    await callback.message.edit_text(msg)
     if os.path.exists(UPI_QR_IMAGE_PATH):
         qr_photo = FSInputFile(UPI_QR_IMAGE_PATH)
         await callback.message.answer_photo(
@@ -201,7 +202,7 @@ async def receive_proof_prompt(callback: CallbackQuery, state: FSMContext):
     order_id = callback.data.split("_", 1)[1]
     await state.update_data(order_id=order_id)
     await callback.message.answer(
-        "📤 Please *send your payment screenshot as a photo* or *send the UTR/reference ID as text*.\n"
+        "📤 Please send your payment screenshot as a photo *or* send the UTR/reference ID as text.\n"
         "Your payment proof will be delivered to admin for verification."
     )
     await state.set_state(OrderStates.waiting_for_proof)
@@ -252,11 +253,12 @@ async def custom_quantity_entered(message: Message, state: FSMContext):
         )
         await state.update_data(order_id=order_id, quantity=quantity, amount=amount)
         msg = (
-            f"📄 PAYMENT INVOICE\nOrder: {order_id}\nQty: {quantity}\nAmt: Rs.{amount}\n"
-            f"Pay to: `{UPI_ID}` (copy and pay by any UPI app) or scan QR below.\n"
+            "📄 PAYMENT INVOICE\n"
+            f"Order: {order_id}\nQty: {quantity}\nAmt: Rs.{amount}\n"
+            f"Pay to: {UPI_ID} (copy and pay via any UPI app) or scan QR below.\n"
             "Click 'I've Paid' when done or upload UTR/Screenshot."
         )
-        await message.answer(msg, parse_mode="Markdown")
+        await message.answer(msg)
         if os.path.exists(UPI_QR_IMAGE_PATH):
             qr_photo = FSInputFile(UPI_QR_IMAGE_PATH)
             await message.answer_photo(
