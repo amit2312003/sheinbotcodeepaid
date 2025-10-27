@@ -2,7 +2,7 @@ import asyncio
 import logging
 import os
 from datetime import datetime
-from aiogram import Bot, Dispatcher, F, Router
+from aiogram import Bot, Dispatcher, Router, F
 from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, FSInputFile
 from aiogram.filters import Command
 from aiogram.fsm.storage.memory import MemoryStorage
@@ -10,9 +10,9 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
-UPI_QR_IMAGE_PATH = "upi_qr.jpg"
 ADMIN_USER_IDS = [int(os.getenv("ADMIN_ID", "1455619072"))]
 UPI_ID = os.getenv("UPI_ID", "")
+UPI_QR_IMAGE_PATH = "upi_qr.jpg"
 
 CODE_TYPES = {
     "1000": {"display": "₹1000 Off", "pricing": {1: 70, 5: 335, 10: 650}},
@@ -22,7 +22,6 @@ CODE_TYPES = {
 BROADCAST_USERS = set()
 
 TERMS_TEXT = """📜 Terms and Conditions
-
 1. All sales are final - No refunds
 2. Codes valid for 30 days
 3. Single-use codes only
@@ -30,7 +29,6 @@ TERMS_TEXT = """📜 Terms and Conditions
 5. Delivery within 5 minutes
 6. No responsibility for invalid codes
 7. By proceeding you agree
-
 Delivery: Via Telegram
 Support: @otaku_Complex"""
 
@@ -41,7 +39,7 @@ class SimpleDB:
         self.delivered_codes = set()
     def create_order(self, user_id, username, code_type, quantity, amount):
         order_id = f"ORD{datetime.now().strftime('%Y%m%d%H%M%S')}{user_id % 10000}"
-        self.orders[order_id] = {'user_id': user_id,'username': username,'code_type': code_type, 'quantity': quantity,'amount': amount,'status': 'pending','created_at': datetime.now().isoformat(),'payment_verified': False}
+        self.orders[order_id] = {'user_id': user_id, 'username': username, 'code_type': code_type, 'quantity': quantity, 'amount': amount, 'status': 'pending', 'created_at': datetime.now().isoformat(), 'payment_verified': False}
         return order_id
     def verify_payment(self, order_id):
         if order_id in self.orders:
@@ -71,7 +69,6 @@ class SimpleDB:
         return {k: len(v) for k, v in self.available_codes.items()}
     def get_order(self, order_id): return self.orders.get(order_id)
     def get_pending_orders(self): return {oid: o for oid, o in self.orders.items() if o['status'] == 'pending'}
-
 db = SimpleDB()
 
 class OrderStates(StatesGroup):
@@ -135,6 +132,25 @@ async def cmd_start(message: Message, state: FSMContext):
         "⚡ Instant delivery after verification\n"
         "Use /buy to start.\nSupport: @otaku_Complex"
     )
+
+@router.message(Command("help"))
+async def cmd_help(message: Message, state: FSMContext):
+    if message.from_user.id in ADMIN_USER_IDS:
+        await message.answer(
+            "📖 ADMIN HELP MENU\n"
+            "Admin Commands:\n"
+            "/addcode code_type CODE1[\\nCODE2...]\n"
+            "/stock - Inventory\n"
+            "/pending - View pending orders\n"
+            "/setqr - Update UPI QR code\n"
+            "Customer Commands:\n"
+            "/start - Welcome\n/buy - Buy codes\n/stock - Stock\n/help - Help\n/cancel - Cancel action"
+        )
+    else:
+        await message.answer(
+            "Customer Commands:\n"
+            "/start - Welcome\n/buy - Buy codes\n/stock - Stock\n/help - Help"
+        )
 
 @router.message(Command("buy"))
 async def cmd_buy(message: Message, state: FSMContext):
@@ -254,7 +270,6 @@ async def receive_proof_prompt(callback: CallbackQuery, state: FSMContext):
     await callback.message.answer(
         "📤 Please send your payment screenshot as a photo or send the UTR/reference ID as text."
     )
-    # *** FIX: set state for proof upload ***
     await state.set_state(OrderStates.waiting_for_proof)
     await callback.answer("Send your UTR or screenshot below.")
 
@@ -287,7 +302,61 @@ async def handle_payment_proof(message: Message, state: FSMContext):
     if sent:
         await state.clear()
 
-# (All other handlers remain same as before for stock, verify, reject, etc...)
+@router.message(Command("addcode"))
+async def add_code(message: Message, state: FSMContext):
+    if message.from_user.id not in ADMIN_USER_IDS:
+        await message.answer("❌ Admin only command")
+        return
+    args = message.text.split(None, 2)
+    if len(args) < 3 or args[1] not in CODE_TYPES:
+        await message.answer(
+            "Usage: /addcode [1000|2000|500] CODE1\\nCODE2\\n... (paste one per line after a space!)"
+        )
+        return
+    code_type = args[1]
+    codes_list = [c.strip() for c in args[2].split('\n') if c.strip()]
+    added = db.add_codes_from_channel(code_type, codes_list)
+    await message.answer(
+        f"✅ Added: {added} codes to {CODE_TYPES[code_type]['display']}. Stock: {db.get_stock_count(code_type)}."
+    )
+
+@router.message(Command("stock"))
+async def check_stock(message: Message, state: FSMContext):
+    stocks = db.get_stock_count()
+    stock_text = "\n".join(f"{CODE_TYPES[k]['display']}: {v}" for k, v in stocks.items())
+    if message.from_user.id in ADMIN_USER_IDS:
+        total = len(db.orders)
+        paid = len([o for o in db.orders.values() if o['payment_verified']])
+        pending = total - paid
+        await message.answer(
+            f"📊 INVENTORY & SALES\n{stock_text}\n"
+            f"Orders: {total} | Paid: {paid} | Pending: {pending}\n"
+            f"Use /pending to view waiting for verification."
+        )
+    else:
+        await message.answer(f"Stock:\n{stock_text}\nUse /buy to order.")
+
+@router.message(Command("pending"))
+async def pending_orders(message: Message, state: FSMContext):
+    if message.from_user.id not in ADMIN_USER_IDS:
+        await message.answer("❌ Admin only command")
+        return
+    pending = db.get_pending_orders()
+    if not pending:
+        await message.answer("✅ No pending orders.")
+        return
+    text = f"⏳ Pending Orders ({len(pending)}):\n"
+    for oid, o in pending.items():
+        text += (
+            f"Order: {oid}\n"
+            f"User: @{o['username']}\n"
+            f"Type: {CODE_TYPES[o['code_type']]['display']}\n"
+            f"Qty: {o['quantity']} | Amt: Rs.{o['amount']}\n"
+            f"Time: {o['created_at'][:16]}\n\n"
+        )
+    await message.answer(text)
+
+# Other handlers for setqr, photo uploading, etc. can be added similarly
 
 async def main():
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
