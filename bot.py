@@ -143,6 +143,7 @@ async def cmd_help(message: Message, state: FSMContext):
             "/stock - Inventory\n"
             "/pending - View pending orders\n"
             "/setqr - Update UPI QR code\n"
+            "/sendall - Broadcast to all users\n"
             "Customer Commands:\n"
             "/start - Welcome\n/buy - Buy codes\n/stock - Stock\n/help - Help\n/cancel - Cancel action"
         )
@@ -263,6 +264,55 @@ async def quantity_selected(callback: CallbackQuery, state: FSMContext):
     await state.set_state(OrderStates.awaiting_payment)
     await callback.answer("Invoice generated!")
 
+@router.message(OrderStates.waiting_for_custom_quantity)
+async def custom_quantity_entered(message: Message, state: FSMContext):
+    data = await state.get_data()
+    code_type = data.get("code_type")
+    try:
+        quantity = int(message.text)
+        if quantity < 1 or quantity > 50:
+            await message.answer("❌ Min 1, Max 50 codes/order.")
+            return
+        if db.get_stock_count(code_type) < quantity:
+            await message.answer(f"❌ Only {db.get_stock_count(code_type)} codes available")
+            return
+        pricing = CODE_TYPES[code_type]["pricing"]
+        amount = pricing[1] * quantity
+        order_id = db.create_order(
+            message.from_user.id, message.from_user.username or message.from_user.first_name,
+            code_type, quantity, amount
+        )
+        await state.update_data(order_id=order_id, quantity=quantity, amount=amount)
+        msg = (
+            "📄 PAYMENT INVOICE\n"
+            f"Order: {order_id}\nType: {CODE_TYPES[code_type]['display']}\n"
+            f"Qty: {quantity}\nAmt: Rs.{amount}\n"
+            f"Pay to: {UPI_ID} (copy and pay via any UPI app) or scan QR below.\n"
+            "Click 'I've Paid' when done or upload UTR/Screenshot."
+        )
+        await message.answer(msg)
+        if os.path.exists(UPI_QR_IMAGE_PATH):
+            qr_photo = FSInputFile(UPI_QR_IMAGE_PATH)
+            await message.answer_photo(
+                photo=qr_photo,
+                caption=f"Pay Rs.{amount} to {UPI_ID}\nOrder: {order_id}",
+                reply_markup=get_payment_keyboard(order_id)
+            )
+        # Admin Notification for custom quantity order
+        for admin_id in ADMIN_USER_IDS:
+            await message.bot.send_message(
+                admin_id,
+                f"🆕 Custom Quantity Order\n"
+                f"User: @{message.from_user.username or message.from_user.full_name} (id={message.from_user.id})\n"
+                f"Type: {CODE_TYPES[code_type]['display']}\n"
+                f"Qty: {quantity} | Amt: Rs.{amount}\n"
+                f"Order ID: {order_id}\n"
+                f"Waiting for payment!"
+            )
+        await state.set_state(OrderStates.awaiting_payment)
+    except ValueError:
+        await message.answer("❌ Please enter a valid number")
+
 @router.callback_query(F.data.startswith("sendproof_"))
 async def receive_proof_prompt(callback: CallbackQuery, state: FSMContext):
     order_id = callback.data.split("_", 1)[1]
@@ -301,6 +351,35 @@ async def handle_payment_proof(message: Message, state: FSMContext):
         sent = True
     if sent:
         await state.clear()
+
+@router.callback_query(F.data.startswith("paid_"))
+async def payment_claimed(callback: CallbackQuery, state: FSMContext):
+    order_id = callback.data.split("_", 1)[1]
+    # update message (photo vs text logic)
+    if getattr(callback.message, "photo", None):
+        await callback.message.edit_caption(
+            f"✅ Payment reported!\nOrder: {order_id}\n"
+            "Waiting for admin verification.\nYou’ll get codes after admin confirms."
+        )
+    else:
+        await callback.message.edit_text(
+            f"✅ Payment reported!\nOrder: {order_id}\n"
+            "Waiting for admin verification.\nYou’ll get codes after admin confirms."
+        )
+    data = await state.get_data()
+    user = callback.from_user
+    for admin_id in ADMIN_USER_IDS:
+        await callback.bot.send_message(
+            admin_id,
+            f"🔔 NEW PAYMENT NOTIFICATION\nOrder: {order_id}\n"
+            f"User: @{user.username or 'none'} ({user.full_name}, id={user.id})\n"
+            f"Qty: {data.get('quantity')} | Amt: Rs.{data.get('amount')}\n"
+            f"Type: {CODE_TYPES.get(data.get('code_type'), {}).get('display', '')}\n"
+            f"Payee UPI: {UPI_ID}\n"
+            "Use CONFIRM or REJECT below."
+        )
+    await state.set_state(OrderStates.verifying_payment)
+    await callback.answer("Admin notified!")
 
 @router.callback_query(F.data.startswith("verify_"))
 async def admin_verify_payment(callback: CallbackQuery, state: FSMContext):
@@ -402,6 +481,50 @@ async def pending_orders(message: Message, state: FSMContext):
             f"Time: {o['created_at'][:16]}\n\n"
         )
     await message.answer(text)
+
+@router.message(Command("sendall"))
+async def broadcast_start(message: Message, state: FSMContext):
+    if message.from_user.id not in ADMIN_USER_IDS:
+        await message.answer("❌ Admin only command")
+        return
+    await state.set_state(OrderStates.broadcast_message)
+    await message.answer("Send the message (text or photo) you want to broadcast to all users:")
+
+@router.message(OrderStates.broadcast_message)
+async def broadcast_message(message: Message, state: FSMContext):
+    await state.clear()
+    users = BROADCAST_USERS - set(ADMIN_USER_IDS)
+    failed = 0
+    success = 0
+    for user_id in users:
+        try:
+            if message.text:
+                await message.bot.send_message(user_id, message.text)
+            elif message.photo:
+                await message.bot.send_photo(user_id, message.photo[-1].file_id, caption=message.caption or '')
+            success += 1
+        except Exception:
+            failed += 1
+    await message.answer(f"Broadcast sent. Success: {success}, Failed: {failed}")
+
+@router.message(Command("setqr"))
+async def set_qr(message: Message, state: FSMContext):
+    if message.from_user.id not in ADMIN_USER_IDS:
+        await message.answer("❌ Admin only command")
+        return
+    await message.answer("📸 Send your UPI QR image now. (As photo, not file)")
+
+@router.message(F.photo)
+async def receive_qr(message: Message, state: FSMContext):
+    if message.from_user.id not in ADMIN_USER_IDS:
+        return
+    try:
+        photo = message.photo[-1]
+        file = await message.bot.get_file(photo.file_id)
+        await message.bot.download_file(file.file_path, UPI_QR_IMAGE_PATH)
+        await message.answer("✅ QR Code updated and will be sent to new buyers!")
+    except Exception as e:
+        await message.answer(f"❌ QR upload failed: {str(e)}")
 
 async def main():
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
