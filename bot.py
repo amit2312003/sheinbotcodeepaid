@@ -302,6 +302,53 @@ async def handle_payment_proof(message: Message, state: FSMContext):
     if sent:
         await state.clear()
 
+@router.callback_query(F.data.startswith("verify_"))
+async def admin_verify_payment(callback: CallbackQuery, state: FSMContext):
+    if callback.from_user.id not in ADMIN_USER_IDS:
+        await callback.answer("❌ Unauthorized", show_alert=True)
+        return
+    order_id = callback.data.split("_", 1)[1]
+    order = db.get_order(order_id)
+    if not order:
+        await callback.answer("❌ Order not found", show_alert=True)
+        return
+    ct = order['code_type']
+    if db.get_stock_count(ct) < order['quantity']:
+        await callback.answer("❌ Not enough codes!", show_alert=True)
+        await callback.message.edit_text(f"❌ INSUFFICIENT STOCK for order {order_id}")
+        return
+    codes = db.get_available_codes(ct, order['quantity'])
+    if not codes:
+        await callback.answer("❌ Failed to deliver codes!", show_alert=True)
+        return
+    db.verify_payment(order_id)
+    user_id = order['user_id']
+    codes_text = "\n".join([f"{i+1}. {code}" for i, code in enumerate(codes)])
+    await callback.bot.send_message(
+        user_id,
+        f"✅ PAYMENT VERIFIED!\nOrder: {order_id}\nType: {CODE_TYPES[ct]['display']}\n"
+        f"Your Codes:\n{codes_text}\nThank you!"
+    )
+    await callback.message.edit_text(
+        f"✅ Codes delivered for {order_id}.\nCustomer notified."
+    )
+    await callback.answer("✅ Codes delivered!", show_alert=True)
+
+@router.callback_query(F.data.startswith("reject_"))
+async def admin_reject_payment(callback: CallbackQuery, state: FSMContext):
+    if callback.from_user.id not in ADMIN_USER_IDS:
+        await callback.answer("❌ Unauthorized", show_alert=True)
+        return
+    order_id = callback.data.split("_", 1)[1]
+    order = db.get_order(order_id)
+    if order:
+        await callback.bot.send_message(
+            order['user_id'],
+            f"❌ Payment not verified.\nOrder: {order_id}\nContact admin: @otaku_Complex with your payment details."
+        )
+    await callback.message.edit_text(f"❌ Order {order_id} rejected.\nCustomer notified.")
+    await callback.answer("Rejected")
+
 @router.message(Command("addcode"))
 async def add_code(message: Message, state: FSMContext):
     if message.from_user.id not in ADMIN_USER_IDS:
@@ -355,8 +402,6 @@ async def pending_orders(message: Message, state: FSMContext):
             f"Time: {o['created_at'][:16]}\n\n"
         )
     await message.answer(text)
-
-# Other handlers for setqr, photo uploading, etc. can be added similarly
 
 async def main():
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
