@@ -14,7 +14,6 @@ UPI_QR_IMAGE_PATH = "upi_qr.jpg"
 ADMIN_USER_IDS = [int(os.getenv("ADMIN_ID", "1455619072"))]
 UPI_ID = os.getenv("UPI_ID", "")
 
-# Custom pricing and code types
 CODE_TYPES = {
     "1000": {"display": "₹1000 Off", "pricing": {1: 70, 5: 335, 10: 650}},
     "2000": {"display": "₹2000 Off", "pricing": {1: 180, 5: 670, 10: 1300}},
@@ -251,13 +250,12 @@ async def quantity_selected(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data.startswith("sendproof_"))
 async def receive_proof_prompt(callback: CallbackQuery, state: FSMContext):
     order_id = callback.data.split("_", 1)[1]
-    logging.info(f"Proof requested for order_id={order_id} user={callback.from_user.id}")
     await state.update_data(order_id=order_id)
     await callback.message.answer(
         "📤 Please send your payment screenshot as a photo or send the UTR/reference ID as text.\n"
         "Your payment proof will be delivered to admin for verification and admin will see Approve/Reject buttons.",
     )
-    await state.set_state(OrderStates.waiting_for_proof)  # critical: set correct state!
+    await state.set_state(OrderStates.waiting_for_proof)
     await callback.answer("Send your UTR or screenshot below.")
 
 @router.message(OrderStates.waiting_for_proof)
@@ -267,7 +265,6 @@ async def handle_payment_proof(message: Message, state: FSMContext):
     user = message.from_user
     sent = False
     approve_keyboard = get_admin_verify_keyboard(order_id)
-    logging.info(f"Received proof from user {user.id} order_id={order_id} {('PHOTO' if message.photo else 'TEXT')}")
     if message.photo:
         caption = (
             f"📤 Payment screenshot for Order: {order_id}\n"
@@ -327,3 +324,58 @@ async def custom_quantity_entered(message: Message, state: FSMContext):
         await state.set_state(OrderStates.awaiting_payment)
     except ValueError:
         await message.answer("❌ Please enter a valid number")
+
+@router.message(Command("cancel"))
+async def cmd_cancel(message: Message, state: FSMContext):
+    await state.clear()
+    await message.answer("❌ Action cancelled\nUse /buy to start again.")
+
+@router.callback_query(F.data == "cancel_order")
+async def cancel_order(callback: CallbackQuery, state: FSMContext):
+    await callback.message.edit_caption(
+        "❌ Order cancelled.\nNo payment needed.\nUse /buy to start new order."
+    )
+    await state.clear()
+    await callback.answer("Order cancelled successfully")
+
+@router.callback_query(F.data.startswith("paid_"))
+async def payment_claimed(callback: CallbackQuery, state: FSMContext):
+    order_id = callback.data.split("_", 1)[1]
+    await callback.message.edit_caption(
+        f"✅ Payment reported!\nOrder: {order_id}\n"
+        "Waiting for admin verification.\nYou’ll get codes after admin confirms."
+    )
+    data = await state.get_data()
+    user = callback.from_user
+    for admin_id in ADMIN_USER_IDS:
+        await callback.bot.send_message(
+            admin_id,
+            f"🔔 NEW PAYMENT NOTIFICATION\nOrder: {order_id}\n"
+            f"User: @{user.username or 'none'} ({user.full_name}, id={user.id})\n"
+            f"Qty: {data['quantity']} | Amt: Rs.{data['amount']}\n"
+            f"Type: {CODE_TYPES[data['code_type']]['display']}\n"
+            f"Payee UPI: {UPI_ID}\n"
+            "Use CONFIRM or REJECT below.",
+            reply_markup=get_admin_verify_keyboard(order_id)
+        )
+    await state.set_state(OrderStates.verifying_payment)
+    await callback.answer("Admin notified!")
+
+@router.callback_query(F.data.startswith("verify_"))
+async def admin_verify_payment(callback: CallbackQuery):
+    if callback.from_user.id not in ADMIN_USER_IDS:
+        await callback.answer("❌ Unauthorized", show_alert=True)
+        return
+    order_id = callback.data.split("_", 1)[1]
+    order = db.get_order(order_id)
+    if not order:
+        await callback.answer("❌ Order not found", show_alert=True)
+        return
+    ct = order['code_type']
+    if db.get_stock_count(ct) < order['quantity']:
+        await callback.answer("❌ Not enough codes!", show_alert=True)
+        await callback.message.edit_text(f"❌ INSUFFICIENT STOCK for order {order_id}")
+        return
+    codes = db.get_available_codes(ct, order['quantity'])
+    if not codes:
+        await callback.answer
