@@ -12,10 +12,10 @@ from aiogram.fsm.state import State, StatesGroup
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 ADMIN_USER_IDS = [int(os.getenv("ADMIN_ID", "1455619072"))]
 UPI_ID = os.getenv("UPI_ID", "")
-PAY_URL = "https://61094b51.aaluu.pages.dev/"
+PAY_URL = "https://aaluu.pages.dev/"
 
 CODE_TYPES = {
-    "1000": {"display": "₹1000 Off", "pricing": {1: 60, 5: 335, 10: 650}},   # Single price updated to 60
+    "1000": {"display": "₹1000 Off", "pricing": {1: 65, 5: 300, 10: 620}},   # Single price updated to 60
     "2000": {"display": "₹2000 Off", "pricing": {1: 180, 5: 670, 10: 1300}},
     "500": {"display": "₹500 Off", "pricing": {1: 30, 5: 130, 10: 240}},
 }
@@ -23,14 +23,14 @@ BROADCAST_USERS = set()
 
 TERMS_TEXT = """📜 Terms and Conditions
 1. All sales are final - No refunds
-2. Codes valid for 30 days
+2. Codes valid till 31 jan 2026
 3. Single-use codes only
 4. Payment within 15 minutes
-5. Delivery within 5 minutes
+5. Delivery within 5-10 minutes
 6. No responsibility for invalid codes
 7. By proceeding you agree
 Delivery: Via Telegram
-Support: @otaku_Complex"""
+Support: @animeverse23_requesting_bot"""
 
 class SimpleDB:
     def __init__(self):
@@ -131,7 +131,7 @@ async def cmd_start(message: Message, state: FSMContext):
         f"🌐 Pay Online: {PAY_URL}\n"
         "💳 Payment via UPI\n"
         "⚡ Instant delivery after verification\n"
-        "Use /buy to start.\nSupport: @otaku_Complex"
+        "Use /buy to start.\nSupport: @animeverse23_requesting_bot"
     )
 
 @router.message(Command("help"))
@@ -161,7 +161,7 @@ async def cmd_buy(message: Message, state: FSMContext):
     in_stock = any(qty > 0 for qty in stocks.values())
     if not in_stock:
         await message.answer(
-            "❌ Out of Stock\nNo codes available now.\nPlease check later or contact @otaku_Complex"
+            "❌ Out of Stock\nNo codes available now.\nPlease check later or contact @animeverse23_requesting_bot"
         )
         return
     await message.answer("Select code type:", reply_markup=get_code_type_keyboard())
@@ -184,7 +184,7 @@ async def terms_accepted(callback: CallbackQuery, state: FSMContext):
     code_type = data.get("code_type")
     if db.get_stock_count(code_type) == 0:
         await callback.message.edit_text(
-            "❌ Out of Stock\nNo codes available now.\nPlease check later or contact @otaku_Complex"
+            "❌ Out of Stock\nNo codes available now.\nPlease check later or contact @animeverse23_requesting_bot"
         )
         await state.clear()
         await callback.answer()
@@ -388,7 +388,7 @@ async def admin_reject_payment(callback: CallbackQuery, state: FSMContext):
     if order:
         await callback.bot.send_message(
             order['user_id'],
-            f"❌ Payment not verified.\nOrder: {order_id}\nContact admin: @otaku_Complex with your payment details."
+            f"❌ Payment not verified.\nOrder: {order_id}\nContact admin: @animeverse23_requesting_bot with your payment details."
         )
     await callback.message.edit_text(f"❌ Order {order_id} rejected.\nCustomer notified.")
     await callback.answer("Rejected")
@@ -501,3 +501,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
