@@ -12,10 +12,10 @@ from aiogram.fsm.state import State, StatesGroup
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 ADMIN_USER_IDS = [int(os.getenv("ADMIN_ID", "1455619072"))]
 UPI_ID = os.getenv("UPI_ID", "")
-UPI_QR_IMAGE_PATH = "upi_qr.jpg"
+PAY_URL = "https://61094b51.aaluu.pages.dev/"
 
 CODE_TYPES = {
-    "1000": {"display": "₹1000 Off", "pricing": {1: 70, 5: 335, 10: 650}},
+    "1000": {"display": "₹1000 Off", "pricing": {1: 60, 5: 335, 10: 650}},   # Single price updated to 60
     "2000": {"display": "₹2000 Off", "pricing": {1: 180, 5: 670, 10: 1300}},
     "500": {"display": "₹500 Off", "pricing": {1: 30, 5: 130, 10: 240}},
 }
@@ -39,7 +39,7 @@ class SimpleDB:
         self.delivered_codes = set()
     def create_order(self, user_id, username, code_type, quantity, amount):
         order_id = f"ORD{datetime.now().strftime('%Y%m%d%H%M%S')}{user_id % 10000}"
-        self.orders[order_id] = {'user_id': user_id, 'username': username, 'code_type': code_type, 'quantity': quantity, 'amount': amount, 'status': 'pending', 'created_at': datetime.now().isoformat(), 'payment_verified': False}
+        self.orders[order_id] = {'user_id': user_id, 'username': username, 'code_type': code_type, 'quantity': quantity, 'amount': amount, 'status': 'pending', 'created_at': datetime.now().isoformat(), 'payment_verified': False, 'delivered': False}
         return order_id
     def verify_payment(self, order_id):
         if order_id in self.orders:
@@ -107,7 +107,7 @@ def get_quantity_keyboard(code_type):
 
 def get_payment_keyboard(order_id):
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✅ I've Paid", callback_data=f"paid_{order_id}")],
+        [InlineKeyboardButton(text="💸 Pay Here", url=PAY_URL)],
         [InlineKeyboardButton(text="📤 Send UTR/Screenshot", callback_data=f"sendproof_{order_id}")],
         [InlineKeyboardButton(text="❌ Cancel Order", callback_data="cancel_order")]
     ])
@@ -128,6 +128,7 @@ async def cmd_start(message: Message, state: FSMContext):
     await message.answer(
         "🛍️ Welcome to Discount Codes Store!\n\n"
         f"📦 Stock:\n{stock_text}\n"
+        f"🌐 Pay Online: {PAY_URL}\n"
         "💳 Payment via UPI\n"
         "⚡ Instant delivery after verification\n"
         "Use /buy to start.\nSupport: @otaku_Complex"
@@ -245,22 +246,14 @@ async def quantity_selected(callback: CallbackQuery, state: FSMContext):
         f"Order ID: {order_id}\nType: {CODE_TYPES[code_type]['display']}\n"
         f"Customer: {callback.from_user.full_name} (@{callback.from_user.username or 'none'})\n"
         f"Quantity: {quantity} codes\nAmount: Rs.{amount}\n"
-        f"Pay to: {UPI_ID} (copy and pay via any UPI app) or scan QR below.\n"
-        "Click 'I've Paid' when done or upload UTR/Screenshot."
+        f"Pay to: {UPI_ID} (copy and pay via any UPI app) or click 'Pay Here' below.\n"
+        "After payment send UTR/Screenshot."
     )
     await callback.message.edit_text(msg)
-    if os.path.exists(UPI_QR_IMAGE_PATH):
-        qr_photo = FSInputFile(UPI_QR_IMAGE_PATH)
-        await callback.message.answer_photo(
-            photo=qr_photo,
-            caption=f"Pay Rs.{amount} to {UPI_ID}\nOrder ID: {order_id}",
-            reply_markup=get_payment_keyboard(order_id)
-        )
-    else:
-        await callback.message.answer(
-            f"Pay Rs.{amount} to: {UPI_ID}\nOrder ID: {order_id}",
-            reply_markup=get_payment_keyboard(order_id)
-        )
+    await callback.message.answer(
+        "💸 Choose your UPI app below to pay instantly:",
+        reply_markup=get_payment_keyboard(order_id)
+    )
     await state.set_state(OrderStates.awaiting_payment)
     await callback.answer("Invoice generated!")
 
@@ -287,17 +280,10 @@ async def custom_quantity_entered(message: Message, state: FSMContext):
             "📄 PAYMENT INVOICE\n"
             f"Order: {order_id}\nType: {CODE_TYPES[code_type]['display']}\n"
             f"Qty: {quantity}\nAmt: Rs.{amount}\n"
-            f"Pay to: {UPI_ID} (copy and pay via any UPI app) or scan QR below.\n"
-            "Click 'I've Paid' when done or upload UTR/Screenshot."
+            f"Pay to: {UPI_ID} (copy and pay via any UPI app) or click 'Pay Here' below.\n"
+            "After payment send UTR/Screenshot."
         )
         await message.answer(msg)
-        if os.path.exists(UPI_QR_IMAGE_PATH):
-            qr_photo = FSInputFile(UPI_QR_IMAGE_PATH)
-            await message.answer_photo(
-                photo=qr_photo,
-                caption=f"Pay Rs.{amount} to {UPI_ID}\nOrder: {order_id}",
-                reply_markup=get_payment_keyboard(order_id)
-            )
         # Admin Notification for custom quantity order
         for admin_id in ADMIN_USER_IDS:
             await message.bot.send_message(
@@ -309,6 +295,10 @@ async def custom_quantity_entered(message: Message, state: FSMContext):
                 f"Order ID: {order_id}\n"
                 f"Waiting for payment!"
             )
+        await message.answer(
+            "💸 Choose your UPI app below to pay instantly:",
+            reply_markup=get_payment_keyboard(order_id)
+        )
         await state.set_state(OrderStates.awaiting_payment)
     except ValueError:
         await message.answer("❌ Please enter a valid number")
@@ -352,35 +342,6 @@ async def handle_payment_proof(message: Message, state: FSMContext):
     if sent:
         await state.clear()
 
-@router.callback_query(F.data.startswith("paid_"))
-async def payment_claimed(callback: CallbackQuery, state: FSMContext):
-    order_id = callback.data.split("_", 1)[1]
-    # update message (photo vs text logic)
-    if getattr(callback.message, "photo", None):
-        await callback.message.edit_caption(
-            f"✅ Payment reported!\nOrder: {order_id}\n"
-            "Waiting for admin verification.\nYou’ll get codes after admin confirms."
-        )
-    else:
-        await callback.message.edit_text(
-            f"✅ Payment reported!\nOrder: {order_id}\n"
-            "Waiting for admin verification.\nYou’ll get codes after admin confirms."
-        )
-    data = await state.get_data()
-    user = callback.from_user
-    for admin_id in ADMIN_USER_IDS:
-        await callback.bot.send_message(
-            admin_id,
-            f"🔔 NEW PAYMENT NOTIFICATION\nOrder: {order_id}\n"
-            f"User: @{user.username or 'none'} ({user.full_name}, id={user.id})\n"
-            f"Qty: {data.get('quantity')} | Amt: Rs.{data.get('amount')}\n"
-            f"Type: {CODE_TYPES.get(data.get('code_type'), {}).get('display', '')}\n"
-            f"Payee UPI: {UPI_ID}\n"
-            "Use CONFIRM or REJECT below."
-        )
-    await state.set_state(OrderStates.verifying_payment)
-    await callback.answer("Admin notified!")
-
 @router.callback_query(F.data.startswith("verify_"))
 async def admin_verify_payment(callback: CallbackQuery, state: FSMContext):
     if callback.from_user.id not in ADMIN_USER_IDS:
@@ -390,6 +351,9 @@ async def admin_verify_payment(callback: CallbackQuery, state: FSMContext):
     order = db.get_order(order_id)
     if not order:
         await callback.answer("❌ Order not found", show_alert=True)
+        return
+    if order.get('delivered'):
+        await callback.answer("⚠️ Codes already sent for this order.", show_alert=True)
         return
     ct = order['code_type']
     if db.get_stock_count(ct) < order['quantity']:
@@ -401,6 +365,7 @@ async def admin_verify_payment(callback: CallbackQuery, state: FSMContext):
         await callback.answer("❌ Failed to deliver codes!", show_alert=True)
         return
     db.verify_payment(order_id)
+    order['delivered'] = True
     user_id = order['user_id']
     codes_text = "\n".join([f"{i+1}. {code}" for i, code in enumerate(codes)])
     await callback.bot.send_message(
@@ -521,7 +486,7 @@ async def receive_qr(message: Message, state: FSMContext):
     try:
         photo = message.photo[-1]
         file = await message.bot.get_file(photo.file_id)
-        await message.bot.download_file(file.file_path, UPI_QR_IMAGE_PATH)
+        await message.bot.download_file(file.file_path, "upi_qr.jpg")
         await message.answer("✅ QR Code updated and will be sent to new buyers!")
     except Exception as e:
         await message.answer(f"❌ QR upload failed: {str(e)}")
